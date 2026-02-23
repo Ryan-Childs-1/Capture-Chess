@@ -346,6 +346,7 @@ def on_square_click(sq: int):
 
     if board.is_game_over():
         st.session_state.status = "Game is over. Reset to play again."
+        st.session_state.selected = None
         return
 
     # If nothing selected: select your own piece
@@ -361,36 +362,46 @@ def on_square_click(sq: int):
         st.session_state.status = f"Selected {square_name(sq)}"
         return
 
-    # If clicking same square: deselect
-    if selected == sq:
+    # If something is selected already...
+    from_sq = selected
+
+    # Clicking the same square toggles off
+    if from_sq == sq:
         st.session_state.selected = None
         st.session_state.status = "Selection cleared."
         return
 
-    # Attempt move from selected to sq
-    from_sq = selected
+    # ✅ NEW: If you click another friendly piece, switch selection instead of trying to move
+    clicked_piece = board.piece_at(sq)
+    if clicked_piece is not None and clicked_piece.color == board.turn:
+        st.session_state.selected = sq
+        st.session_state.status = f"Selected {square_name(sq)}"
+        return
+
+    # Otherwise attempt move from selected to clicked square
     to_sq = sq
 
-    # Handle pawn promotion choice if needed (normal move)
     mover = board.piece_at(from_sq)
     if mover is None:
         st.session_state.selected = None
+        st.session_state.status = "Selection reset (piece missing)."
         return
 
+    # Promotion handling (still the same idea as your original)
     promotion_piece = None
     needs_promo = (
         mover.piece_type == chess.PAWN and
         (chess.square_rank(to_sq) == 7 if board.turn == chess.WHITE else chess.square_rank(to_sq) == 0)
     )
 
-    # If promotion possible, we’ll prefer Queen by default and allow override in UI via sidebar
     if needs_promo:
         promo_map = {"Queen": chess.QUEEN, "Rook": chess.ROOK, "Bishop": chess.BISHOP, "Knight": chess.KNIGHT}
         promotion_piece = promo_map.get(st.session_state.get("promo_choice", "Queen"), chess.QUEEN)
 
     move = find_legal_move(board, from_sq, to_sq, promotion_piece=promotion_piece)
+
     if move is None:
-        # if promotion not specified, try any promotion move and prompt user
+        # If promotion not specified, prompt
         if needs_promo:
             any_promo = None
             for m in board.legal_moves:
@@ -406,27 +417,20 @@ def on_square_click(sq: int):
 
     fen_before = board.fen()
 
-    # Decide capture mode
-    if board.is_capture(move):
-        mode = st.session_state.capture_mode
-        try:
+    try:
+        if board.is_capture(move):
+            mode = st.session_state.capture_mode
             if mode.startswith("Convert"):
                 desc = apply_convert_capture(board, move)
             else:
                 desc = apply_normal_move(board, move)
-        except Exception as e:
-            board.set_fen(fen_before)
-            st.session_state.status = f"Move failed: {e}"
-            st.session_state.selected = None
-            return
-    else:
-        try:
+        else:
             desc = apply_normal_move(board, move)
-        except Exception as e:
-            board.set_fen(fen_before)
-            st.session_state.status = f"Move failed: {e}"
-            st.session_state.selected = None
-            return
+    except Exception as e:
+        board.set_fen(fen_before)
+        st.session_state.status = f"Move failed: {e}"
+        st.session_state.selected = None
+        return
 
     fen_after = board.fen()
     record_action(fen_before, fen_after, desc)
